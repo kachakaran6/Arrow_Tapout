@@ -1,0 +1,44 @@
+name: arrowtapout
+description: "Arrow Tap-Out — Premium puzzle game where you free trapped arrows."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Game engine
+  flame: ^1.18.0
+
+  # Animation
+  flutter_animate: ^4.5.0
+
+  # Audio
+  flame_audio: ^2.10.0
+
+  # State management
+  flutter_riverpod: ^2.5.1
+
+  # Fonts (downloaded at runtime from Google)
+  google_fonts: ^6.2.1
+
+  # Utilities
+  collection: ^1.18.0
+
+  # Icons
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/audio/
