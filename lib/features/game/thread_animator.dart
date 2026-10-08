@@ -6,6 +6,7 @@ import 'package:arrowtapout/engine/board_state.dart';
 import 'package:arrowtapout/engine/dir.dart';
 import 'package:arrowtapout/engine/level.dart';
 import 'package:arrowtapout/engine/thread.dart';
+import 'package:flutter/animation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
@@ -225,6 +226,76 @@ class ActiveBlocked {
   bool isDone(double nowMs) => (nowMs - startTimeMs) >= 420.0;
 }
 
+/// Particle emitted during exit slides and level completions.
+class BoardParticle {
+  BoardParticle({
+    required this.x,
+    required this.y,
+    required this.vx,
+    required this.vy,
+    required this.color,
+    required this.size,
+    required this.startTimeMs,
+    required this.maxLifeMs,
+  });
+
+  final double x;
+  final double y;
+  final double vx;
+  final double vy;
+  final ui.Color color;
+  final double size;
+  final double startTimeMs;
+  final double maxLifeMs;
+
+  double progress(double nowMs) =>
+      ((nowMs - startTimeMs) / maxLifeMs).clamp(0.0, 1.0);
+
+  double alpha(double nowMs) {
+    final p = progress(nowMs);
+    return (1.0 - p).clamp(0.0, 1.0);
+  }
+
+  ui.Offset currentPos(double nowMs) {
+    final t = (nowMs - startTimeMs) / 1000.0;
+    return ui.Offset(x + vx * t, y + vy * t);
+  }
+
+  bool isDone(double nowMs) => (nowMs - startTimeMs) >= maxLifeMs;
+}
+
+/// Expanding circular shockwave ripple on tapout launch or level completion.
+class BoardRipple {
+  BoardRipple({
+    required this.center,
+    required this.maxRadius,
+    required this.color,
+    required this.startTimeMs,
+    this.durationMs = 380.0,
+  });
+
+  final ui.Offset center;
+  final double maxRadius;
+  final ui.Color color;
+  final double startTimeMs;
+  final double durationMs;
+
+  double progress(double nowMs) =>
+      ((nowMs - startTimeMs) / durationMs).clamp(0.0, 1.0);
+
+  double currentRadius(double nowMs) {
+    final p = progress(nowMs);
+    return maxRadius * Curves.easeOutCubic.transform(p);
+  }
+
+  double alpha(double nowMs) {
+    final p = progress(nowMs);
+    return (1.0 - p).clamp(0.0, 1.0);
+  }
+
+  bool isDone(double nowMs) => (nowMs - startTimeMs) >= durationMs;
+}
+
 /// Controller and animator driving all dynamic rendering on a single Ticker as a ChangeNotifier.
 class BoardAnimator extends ChangeNotifier {
   BoardAnimator({
@@ -238,6 +309,8 @@ class BoardAnimator extends ChangeNotifier {
   final Map<int, ThreadGeometry> geometries = {};
   final Map<int, ActiveExit> exits = {};
   final Map<int, ActiveBlocked> blockeds = {};
+  final List<BoardParticle> particles = [];
+  final List<BoardRipple> ripples = [];
 
   int? hintedThreadId;
   double? hintStartTimeMs;
@@ -248,9 +321,13 @@ class BoardAnimator extends ChangeNotifier {
   double _nowMs = 0.0;
   double get nowMs => _nowMs;
 
+  final math.Random _rng = math.Random();
+
   bool get hasActiveAnimations =>
       exits.isNotEmpty ||
       blockeds.isNotEmpty ||
+      particles.isNotEmpty ||
+      ripples.isNotEmpty ||
       hintedThreadId != null ||
       (enterStartTimeMs != null && (_nowMs - enterStartTimeMs!) < enterTotalMs);
 
@@ -258,6 +335,8 @@ class BoardAnimator extends ChangeNotifier {
     geometries.clear();
     exits.clear();
     blockeds.clear();
+    particles.clear();
+    ripples.clear();
     hintedThreadId = null;
     hintStartTimeMs = null;
     enterStartTimeMs = null;
@@ -292,7 +371,11 @@ class BoardAnimator extends ChangeNotifier {
     return Primitives.curveEnter.transform(p);
   }
 
-  void triggerExit(int threadId, {required bool reduceMotion}) {
+  void triggerExit(
+    int threadId, {
+    required bool reduceMotion,
+    ui.Color? particleColor,
+  }) {
     final geom = geometries[threadId];
     if (geom == null) return;
 
@@ -308,6 +391,35 @@ class BoardAnimator extends ChangeNotifier {
 
     if (hintedThreadId == threadId) {
       hintedThreadId = null;
+    }
+
+    // Spawn initial departure ripple at head node
+    if (!reduceMotion) {
+      final head = geom.thread.head;
+      final headPos = ui.Offset(head.c * geom.cellSize, head.r * geom.cellSize);
+      ripples.add(BoardRipple(
+        center: headPos,
+        maxRadius: geom.cellSize * 0.75,
+        color: particleColor ?? const ui.Color(0xFFE07A5F),
+        startTimeMs: _nowMs,
+        durationMs: 340.0,
+      ));
+
+      // Spawn initial stardust burst at head
+      for (var i = 0; i < 5; i++) {
+        final angle = _rng.nextDouble() * 2 * math.pi;
+        final speed = 30.0 + _rng.nextDouble() * 50.0;
+        particles.add(BoardParticle(
+          x: headPos.dx,
+          y: headPos.dy,
+          vx: math.cos(angle) * speed,
+          vy: math.sin(angle) * speed,
+          color: particleColor ?? const ui.Color(0xFFE07A5F),
+          size: 2.0 + _rng.nextDouble() * 2.2,
+          startTimeMs: _nowMs,
+          maxLifeMs: 280.0 + _rng.nextDouble() * 160.0,
+        ));
+      }
     }
 
     _ensureTicker();
@@ -340,6 +452,48 @@ class BoardAnimator extends ChangeNotifier {
     notifyListeners();
   }
 
+  void triggerVictoryCelebration({
+    required ui.Offset center,
+    required double radius,
+    required List<ui.Color> palette,
+  }) {
+    // Expanding rings
+    ripples.add(BoardRipple(
+      center: center,
+      maxRadius: radius * 1.2,
+      color: palette.first,
+      startTimeMs: _nowMs,
+      durationMs: 650.0,
+    ));
+    ripples.add(BoardRipple(
+      center: center,
+      maxRadius: radius * 0.85,
+      color: palette.length > 1 ? palette[1] : palette.first,
+      startTimeMs: _nowMs + 120.0,
+      durationMs: 600.0,
+    ));
+
+    // Particle sparklers burst
+    for (var i = 0; i < 36; i++) {
+      final angle = _rng.nextDouble() * 2 * math.pi;
+      final speed = 70.0 + _rng.nextDouble() * 160.0;
+      final col = palette[_rng.nextInt(palette.length)];
+      particles.add(BoardParticle(
+        x: center.dx + (math.cos(angle) * 8.0),
+        y: center.dy + (math.sin(angle) * 8.0),
+        vx: math.cos(angle) * speed,
+        vy: math.sin(angle) * speed - 15.0,
+        color: col,
+        size: 2.5 + _rng.nextDouble() * 3.0,
+        startTimeMs: _nowMs,
+        maxLifeMs: 500.0 + _rng.nextDouble() * 350.0,
+      ));
+    }
+
+    _ensureTicker();
+    notifyListeners();
+  }
+
   void _ensureTicker() {
     if (!_ticker.isActive) {
       _ticker.start();
@@ -349,16 +503,41 @@ class BoardAnimator extends ChangeNotifier {
   void _handleTick(Duration elapsed) {
     _nowMs = elapsed.inMicroseconds / 1000.0;
 
-    // Prune finished exits
+    // Prune finished exits and emit trailing speed particles
     final completedExits = <int>[];
     for (final exit in exits.values) {
       if (exit.isDone(_nowMs)) {
         completedExits.add(exit.threadId);
+      } else if (!exit.reduceMotion && _rng.nextDouble() < 0.40) {
+        // Emit subtle trail whisper
+        final geom = exit.geometry;
+        final disp = exit.displacement(_nowMs);
+        final tailOffset = (geom.stubLengthPx + disp)
+            .clamp(0.001, geom.extendedMetric.length - 0.001);
+        final tangent = geom.extendedMetric.getTangentForOffset(tailOffset);
+        if (tangent != null) {
+          particles.add(BoardParticle(
+            x: tangent.position.dx + (_rng.nextDouble() - 0.5) * 4.0,
+            y: tangent.position.dy + (_rng.nextDouble() - 0.5) * 4.0,
+            vx: -tangent.vector.dx * 20.0 + (_rng.nextDouble() - 0.5) * 15.0,
+            vy: -tangent.vector.dy * 20.0 + (_rng.nextDouble() - 0.5) * 15.0,
+            color: const ui.Color(0xFFE07A5F).withValues(alpha: 0.7),
+            size: 1.8 + _rng.nextDouble() * 1.5,
+            startTimeMs: _nowMs,
+            maxLifeMs: 220.0 + _rng.nextDouble() * 120.0,
+          ));
+        }
       }
     }
     for (final id in completedExits) {
       exits.remove(id);
     }
+
+    // Prune particles
+    particles.removeWhere((p) => p.isDone(_nowMs));
+
+    // Prune ripples
+    ripples.removeWhere((r) => r.isDone(_nowMs));
 
     // Prune finished blocked bounces
     final completedBlockeds = <int>[];

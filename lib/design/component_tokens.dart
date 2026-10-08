@@ -11,24 +11,18 @@ abstract final class ComponentTokens {
   static const double mistakeDotGap = 10.0;
 
   /// Computes the thread stroke width for a given [cellSize] in logical pixels.
-  ///
-  /// `stroke = clamp(cell * 0.06, 1.6, 2.4)` dp per Revision 2.
   static double threadStroke(double cellSize) {
-    return (cellSize * 0.06).clamp(1.6, 2.4);
+    return (cellSize * 0.16).clamp(3.8, 6.8);
   }
 
   /// Computes the chevron arrowhead arm length for a given [cellSize].
-  ///
-  /// `armLength = clamp(cell * 0.23, 4.0, 9.0)` dp per Revision 2.
   static double arrowheadArm(double cellSize) {
-    return (cellSize * 0.23).clamp(4.0, 9.0);
+    return (cellSize * 0.36).clamp(8.0, 16.0);
   }
 
   /// Computes the grid dot radius for a given [cellSize].
-  ///
-  /// `dotRadius = clamp(cell * 0.04, 1.0, 1.6)` dp per Revision 2.
   static double gridDotRadius(double cellSize) {
-    return (cellSize * 0.04).clamp(1.0, 1.6);
+    return (cellSize * 0.05).clamp(1.2, 2.2);
   }
 
   /// Computes the tap tolerance distance in cell units (0.5 cells).

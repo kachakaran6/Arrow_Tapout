@@ -2,40 +2,83 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:arrowtapout/design/app_tokens.dart';
+import 'package:arrowtapout/design/component_tokens.dart';
 import 'package:arrowtapout/engine/cell.dart';
 import 'package:arrowtapout/engine/dir.dart';
 import 'package:arrowtapout/engine/level.dart';
 import 'package:arrowtapout/features/game/thread_animator.dart';
 import 'package:flutter/material.dart';
 
-/// Helper to draw an open chevron arrowhead at a tangent position with exact specs.
+/// Helper to draw a bold, solid aerodynamic chevron arrowhead.
 void drawChevronArrowhead({
   required ui.Canvas canvas,
   required ui.Offset headPoint,
   required double angleRad,
   required double armLengthPx,
   required ui.Paint paint,
+  ui.Paint? shadowPaint,
 }) {
-  // Half angle = 40 degrees
-  const halfAngleRad = 40.0 * math.pi / 180.0;
+  // Arrow geometry: sleek solid aerodynamic pointer
+  final noseDist = armLengthPx * 0.48;
+  final wingDist = armLengthPx * 0.72;
+  const wingAngle = 142.0 * math.pi / 180.0;
+  final notchDist = armLengthPx * 0.12;
 
-  final leftAngle = angleRad + math.pi - halfAngleRad;
-  final rightAngle = angleRad + math.pi + halfAngleRad;
-
-  final leftP = ui.Offset(
-    headPoint.dx + math.cos(leftAngle) * armLengthPx,
-    headPoint.dy + math.sin(leftAngle) * armLengthPx,
-  );
-  final rightP = ui.Offset(
-    headPoint.dx + math.cos(rightAngle) * armLengthPx,
-    headPoint.dy + math.sin(rightAngle) * armLengthPx,
+  final tip = ui.Offset(
+    headPoint.dx + math.cos(angleRad) * noseDist,
+    headPoint.dy + math.sin(angleRad) * noseDist,
   );
 
-  canvas.drawLine(headPoint, leftP, paint);
-  canvas.drawLine(headPoint, rightP, paint);
+  final leftWing = ui.Offset(
+    headPoint.dx + math.cos(angleRad - wingAngle) * wingDist,
+    headPoint.dy + math.sin(angleRad - wingAngle) * wingDist,
+  );
+
+  final rightWing = ui.Offset(
+    headPoint.dx + math.cos(angleRad + wingAngle) * wingDist,
+    headPoint.dy + math.sin(angleRad + wingAngle) * wingDist,
+  );
+
+  final notch = ui.Offset(
+    headPoint.dx - math.cos(angleRad) * notchDist,
+    headPoint.dy - math.sin(angleRad) * notchDist,
+  );
+
+  final path = ui.Path()
+    ..moveTo(tip.dx, tip.dy)
+    ..lineTo(leftWing.dx, leftWing.dy)
+    ..lineTo(notch.dx, notch.dy)
+    ..lineTo(rightWing.dx, rightWing.dy)
+    ..close();
+
+  if (shadowPaint != null) {
+    canvas.save();
+    canvas.translate(0, 2.0);
+    canvas.drawPath(path, shadowPaint);
+    canvas.restore();
+  }
+
+  // Draw solid filled arrow pointer
+  final fillPaint = Paint()
+    ..style = PaintingStyle.fill
+    ..color = paint.color
+    ..isAntiAlias = true;
+
+  canvas.drawPath(path, fillPaint);
+
+  // Stroke border for crisp rounding
+  final strokeBorder = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = math.max(1.5, paint.strokeWidth * 0.35)
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round
+    ..color = paint.color
+    ..isAntiAlias = true;
+
+  canvas.drawPath(path, strokeBorder);
 }
 
-/// Unified Board Painter rendering the lattice dots and all threads on a single ticker.
+/// Unified Board Painter rendering lattice dots, ambient shadows, tactile threads, ripples, and particles.
 class BoardPainter extends CustomPainter {
   BoardPainter({
     required this.level,
@@ -61,6 +104,12 @@ class BoardPainter extends CustomPainter {
     ..strokeJoin = StrokeJoin.round
     ..isAntiAlias = true;
 
+  final Paint _shadowPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round
+    ..isAntiAlias = true;
+
   final Paint _hintPaint = Paint()
     ..style = PaintingStyle.stroke
     ..strokeCap = StrokeCap.round
@@ -69,6 +118,15 @@ class BoardPainter extends CustomPainter {
 
   final Paint _dotPaint = Paint()
     ..style = PaintingStyle.fill
+    ..isAntiAlias = true;
+
+  final Paint _particlePaint = Paint()
+    ..style = PaintingStyle.fill
+    ..isAntiAlias = true;
+
+  final Paint _ripplePaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.0
     ..isAntiAlias = true;
 
   static Set<Cell> _computeMaskNodes(Level level) {
@@ -96,12 +154,15 @@ class BoardPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final strokeWidth = (cellSize * 0.06).clamp(1.6, 2.4);
-    final armLength = (cellSize * 0.23).clamp(4.0, 9.0);
-    final dotRadius = (cellSize * 0.04).clamp(1.0, 1.6);
+    final strokeWidth = ComponentTokens.threadStroke(cellSize);
+    final armLength = ComponentTokens.arrowheadArm(cellSize);
+    final dotRadius = ComponentTokens.gridDotRadius(cellSize);
     final nowMs = animator.nowMs;
 
     _threadPaint.strokeWidth = strokeWidth;
+    _shadowPaint.strokeWidth = strokeWidth + 0.8;
+    _shadowPaint.color = tokens.ink.withValues(alpha: 0.12);
+    _shadowPaint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5);
     _dotPaint.color = tokens.gridDot;
 
     // 1. Draw lattice grid dots
@@ -125,7 +186,18 @@ class BoardPainter extends CustomPainter {
       }
     }
 
-    // 2. Hint outline under hinted thread
+    // 2. Draw shockwave ripples
+    for (final ripple in animator.ripples) {
+      final rad = ripple.currentRadius(nowMs);
+      final alpha = ripple.alpha(nowMs);
+      if (alpha > 0.0) {
+        _ripplePaint.color = ripple.color
+            .withValues(alpha: (ripple.color.a * alpha * 0.7).clamp(0.0, 1.0));
+        canvas.drawCircle(ripple.center, rad, _ripplePaint);
+      }
+    }
+
+    // 3. Hint outline under hinted thread
     final hintedId = animator.hintedThreadId;
     if (hintedId != null && animator.hintStartTimeMs != null) {
       final geom = animator.geometries[hintedId];
@@ -139,14 +211,50 @@ class BoardPainter extends CustomPainter {
         }
 
         _hintPaint
-          ..strokeWidth = strokeWidth + 2.0
+          ..strokeWidth = strokeWidth + 4.0
           ..color = tokens.accent.withValues(alpha: pulse.clamp(0.0, 1.0));
 
         canvas.drawPath(geom.basePath, _hintPaint);
       }
     }
 
-    // 3. Paint all active / exiting threads
+    // 4. Pass 1: Ambient Drop Shadows for all active/exiting pieces
+    for (final thread in level.threads) {
+      final tid = thread.id;
+      final isActive = activeIds.contains(tid);
+      final activeExit = animator.exits[tid];
+      final geom = animator.geometries[tid];
+      if (geom == null || (!isActive && activeExit == null)) continue;
+
+      canvas.save();
+      canvas.translate(0, 2.5);
+
+      if (activeExit != null) {
+        if (!reduceMotion) {
+          final disp = activeExit.displacement(nowMs);
+          final windowStart = math.max(0.0, geom.stubLengthPx + disp);
+          final windowEnd = math.min(
+            geom.extendedMetric.length,
+            geom.stubLengthPx + disp + geom.threadLengthPx,
+          );
+          if (windowEnd > windowStart) {
+            final extracted =
+                geom.extendedMetric.extractPath(windowStart, windowEnd);
+            canvas.drawPath(extracted, _shadowPaint);
+          }
+        }
+      } else {
+        final activeBlocked = animator.blockeds[tid];
+        if (activeBlocked != null) {
+          final dispPx = activeBlocked.displacementPx(nowMs);
+          canvas.translate(thread.dir.dx * dispPx, thread.dir.dy * dispPx);
+        }
+        canvas.drawPath(geom.basePath, _shadowPaint);
+      }
+      canvas.restore();
+    }
+
+    // 5. Pass 2: Main Thread Bodies & Arrowheads
     var threadIndex = 0;
     for (final thread in level.threads) {
       final tid = thread.id;
@@ -301,6 +409,17 @@ class BoardPainter extends CustomPainter {
 
       threadIndex++;
     }
+
+    // 6. Draw trailing particles and victory sparks
+    for (final p in animator.particles) {
+      final pos = p.currentPos(nowMs);
+      final alpha = p.alpha(nowMs);
+      if (alpha > 0.0) {
+        _particlePaint.color =
+            p.color.withValues(alpha: (p.color.a * alpha).clamp(0.0, 1.0));
+        canvas.drawCircle(pos, p.size * (0.5 + 0.5 * alpha), _particlePaint);
+      }
+    }
   }
 
   double _dirToAngle(Dir dir) => switch (dir) {
@@ -316,6 +435,7 @@ class BoardPainter extends CustomPainter {
         oldDelegate.activeIds != activeIds ||
         oldDelegate.cellSize != cellSize ||
         oldDelegate.tokens != tokens ||
-        oldDelegate.reduceMotion != reduceMotion;
+        oldDelegate.reduceMotion != reduceMotion ||
+        animator.hasActiveAnimations;
   }
 }
