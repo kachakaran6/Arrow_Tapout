@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:arrowtapout/data/progress_repository.dart';
 import 'package:arrowtapout/data/snapshot_repository.dart';
@@ -146,26 +145,9 @@ class GameController extends StateNotifier<GameState> {
 
   void _handleLevelCompleted() {
     _completeTimer?.cancel();
-    // Trigger celebratory particle burst and wave ripples
-    if (!_reduceMotion) {
-      final center = ui.Offset(
-        (state.level.cols - 1) * 0.5 * 36.0,
-        (state.level.rows - 1) * 0.5 * 36.0,
-      );
-      animator.triggerVictoryCelebration(
-        center: center,
-        radius: 120.0,
-        palette: const [
-          ui.Color(0xFFE07A5F),
-          ui.Color(0xFFD4A373),
-          ui.Color(0xFF81B29A),
-          ui.Color(0xFF3D405B),
-        ],
-      );
-    }
 
-    // 400 ms stillness after last exit before showing complete sheet
-    _completeTimer = Timer(const Duration(milliseconds: 400), () {
+    // 350 ms stillness after last exit before showing complete sheet
+    _completeTimer = Timer(const Duration(milliseconds: 350), () {
       if (!mounted) return;
 
       final stars = GameState.calculateStars(state.mistakes);

@@ -9,7 +9,7 @@ import 'package:arrowtapout/engine/level.dart';
 import 'package:arrowtapout/features/game/thread_animator.dart';
 import 'package:flutter/material.dart';
 
-/// Helper to draw a bold, solid aerodynamic chevron arrowhead.
+/// Helper to draw a sleek, solid aerodynamic chevron arrowhead.
 void drawChevronArrowhead({
   required ui.Canvas canvas,
   required ui.Offset headPoint,
@@ -18,11 +18,10 @@ void drawChevronArrowhead({
   required ui.Paint paint,
   ui.Paint? shadowPaint,
 }) {
-  // Arrow geometry: sleek solid aerodynamic pointer
-  final noseDist = armLengthPx * 0.48;
-  final wingDist = armLengthPx * 0.72;
+  final noseDist = armLengthPx * 0.45;
+  final wingDist = armLengthPx * 0.70;
   const wingAngle = 142.0 * math.pi / 180.0;
-  final notchDist = armLengthPx * 0.12;
+  final notchDist = armLengthPx * 0.10;
 
   final tip = ui.Offset(
     headPoint.dx + math.cos(angleRad) * noseDist,
@@ -78,7 +77,7 @@ void drawChevronArrowhead({
   canvas.drawPath(path, strokeBorder);
 }
 
-/// Unified Board Painter rendering lattice dots, ambient shadows, tactile threads, ripples, and particles.
+/// Unified Board Painter rendering lattice dots, ambient shadows, and silky-smooth translating threads.
 class BoardPainter extends CustomPainter {
   BoardPainter({
     required this.level,
@@ -118,15 +117,6 @@ class BoardPainter extends CustomPainter {
 
   final Paint _dotPaint = Paint()
     ..style = PaintingStyle.fill
-    ..isAntiAlias = true;
-
-  final Paint _particlePaint = Paint()
-    ..style = PaintingStyle.fill
-    ..isAntiAlias = true;
-
-  final Paint _ripplePaint = Paint()
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 2.0
     ..isAntiAlias = true;
 
   static Set<Cell> _computeMaskNodes(Level level) {
@@ -186,18 +176,7 @@ class BoardPainter extends CustomPainter {
       }
     }
 
-    // 2. Draw shockwave ripples
-    for (final ripple in animator.ripples) {
-      final rad = ripple.currentRadius(nowMs);
-      final alpha = ripple.alpha(nowMs);
-      if (alpha > 0.0) {
-        _ripplePaint.color = ripple.color
-            .withValues(alpha: (ripple.color.a * alpha * 0.7).clamp(0.0, 1.0));
-        canvas.drawCircle(ripple.center, rad, _ripplePaint);
-      }
-    }
-
-    // 3. Hint outline under hinted thread
+    // 2. Hint outline under hinted thread
     final hintedId = animator.hintedThreadId;
     if (hintedId != null && animator.hintStartTimeMs != null) {
       final geom = animator.geometries[hintedId];
@@ -218,7 +197,7 @@ class BoardPainter extends CustomPainter {
       }
     }
 
-    // 4. Pass 1: Ambient Drop Shadows for all active/exiting pieces
+    // 3. Pass 1: Ambient Drop Shadows for all active/exiting pieces
     for (final thread in level.threads) {
       final tid = thread.id;
       final isActive = activeIds.contains(tid);
@@ -232,16 +211,10 @@ class BoardPainter extends CustomPainter {
       if (activeExit != null) {
         if (!reduceMotion) {
           final disp = activeExit.displacement(nowMs);
-          final windowStart = math.max(0.0, geom.stubLengthPx + disp);
-          final windowEnd = math.min(
-            geom.extendedMetric.length,
-            geom.stubLengthPx + disp + geom.threadLengthPx,
-          );
-          if (windowEnd > windowStart) {
-            final extracted =
-                geom.extendedMetric.extractPath(windowStart, windowEnd);
-            canvas.drawPath(extracted, _shadowPaint);
-          }
+          final alpha = activeExit.alpha(nowMs);
+          canvas.translate(thread.dir.dx * disp, thread.dir.dy * disp);
+          _shadowPaint.color = tokens.ink.withValues(alpha: 0.12 * alpha);
+          canvas.drawPath(geom.basePath, _shadowPaint);
         }
       } else {
         final activeBlocked = animator.blockeds[tid];
@@ -249,12 +222,13 @@ class BoardPainter extends CustomPainter {
           final dispPx = activeBlocked.displacementPx(nowMs);
           canvas.translate(thread.dir.dx * dispPx, thread.dir.dy * dispPx);
         }
+        _shadowPaint.color = tokens.ink.withValues(alpha: 0.12);
         canvas.drawPath(geom.basePath, _shadowPaint);
       }
       canvas.restore();
     }
 
-    // 5. Pass 2: Main Thread Bodies & Arrowheads
+    // 4. Pass 2: Main Thread Bodies & Arrowheads
     var threadIndex = 0;
     for (final thread in level.threads) {
       final tid = thread.id;
@@ -267,8 +241,12 @@ class BoardPainter extends CustomPainter {
         continue;
       }
 
+      final headNode = thread.head;
+      final headPoint = Offset(headNode.c * cellSize, headNode.r * cellSize);
+      final angle = _dirToAngle(thread.dir);
+
       if (activeExit != null) {
-        // --- Exiting thread animation ---
+        // --- Smooth Linear Translation Exit Animation ---
         final alpha = activeExit.alpha(nowMs);
         _threadPaint.color =
             tokens.thread.withValues(alpha: tokens.thread.a * alpha);
@@ -276,10 +254,6 @@ class BoardPainter extends CustomPainter {
         if (reduceMotion) {
           // Fade in place
           canvas.drawPath(geom.basePath, _threadPaint);
-          final headNode = thread.head;
-          final headPoint =
-              Offset(headNode.c * cellSize, headNode.r * cellSize);
-          final angle = _dirToAngle(thread.dir);
           drawChevronArrowhead(
             canvas: canvas,
             headPoint: headPoint,
@@ -289,31 +263,19 @@ class BoardPainter extends CustomPainter {
           );
         } else {
           final disp = activeExit.displacement(nowMs);
-          final windowStart = math.max(0.0, geom.stubLengthPx + disp);
-          final windowEnd = math.min(
-            geom.extendedMetric.length,
-            geom.stubLengthPx + disp + geom.threadLengthPx,
+          canvas.save();
+          canvas.translate(thread.dir.dx * disp, thread.dir.dy * disp);
+
+          canvas.drawPath(geom.basePath, _threadPaint);
+          drawChevronArrowhead(
+            canvas: canvas,
+            headPoint: headPoint,
+            angleRad: angle,
+            armLengthPx: armLength,
+            paint: _threadPaint,
           );
 
-          if (windowEnd > windowStart) {
-            final extracted =
-                geom.extendedMetric.extractPath(windowStart, windowEnd);
-            canvas.drawPath(extracted, _threadPaint);
-
-            final headOffset = (geom.stubLengthPx + disp + geom.threadLengthPx)
-                .clamp(0.001, geom.extendedMetric.length - 0.001);
-            final tangent = geom.extendedMetric.getTangentForOffset(headOffset);
-            if (tangent != null) {
-              final angle = math.atan2(tangent.vector.dy, tangent.vector.dx);
-              drawChevronArrowhead(
-                canvas: canvas,
-                headPoint: tangent.position,
-                angleRad: angle,
-                armLengthPx: armLength,
-                paint: _threadPaint,
-              );
-            }
-          }
+          canvas.restore();
         }
       } else {
         // --- Idle, Blocked, or Entering thread ---
@@ -340,11 +302,6 @@ class BoardPainter extends CustomPainter {
           );
 
           canvas.drawPath(geom.basePath, _threadPaint);
-
-          final headNode = thread.head;
-          final headPoint =
-              Offset(headNode.c * cellSize, headNode.r * cellSize);
-          final angle = _dirToAngle(thread.dir);
           drawChevronArrowhead(
             canvas: canvas,
             headPoint: headPoint,
@@ -370,11 +327,6 @@ class BoardPainter extends CustomPainter {
 
           if (entrance >= 1.0) {
             canvas.drawPath(geom.basePath, _threadPaint);
-
-            final headNode = thread.head;
-            final headPoint =
-                Offset(headNode.c * cellSize, headNode.r * cellSize);
-            final angle = _dirToAngle(thread.dir);
             drawChevronArrowhead(
               canvas: canvas,
               headPoint: headPoint,
@@ -383,42 +335,22 @@ class BoardPainter extends CustomPainter {
               paint: _threadPaint,
             );
           } else if (entrance > 0.0) {
-            final visibleLen = geom.threadLengthPx * entrance;
-            final subPath = geom.extendedMetric.extractPath(
-              geom.stubLengthPx,
-              geom.stubLengthPx + visibleLen,
+            final alpha = entrance;
+            _threadPaint.color = _threadPaint.color
+                .withValues(alpha: _threadPaint.color.a * alpha);
+            canvas.drawPath(geom.basePath, _threadPaint);
+            drawChevronArrowhead(
+              canvas: canvas,
+              headPoint: headPoint,
+              angleRad: angle,
+              armLengthPx: armLength,
+              paint: _threadPaint,
             );
-            canvas.drawPath(subPath, _threadPaint);
-
-            final tangent = geom.extendedMetric.getTangentForOffset(
-              geom.stubLengthPx + visibleLen,
-            );
-            if (tangent != null) {
-              final angle = math.atan2(tangent.vector.dy, tangent.vector.dx);
-              drawChevronArrowhead(
-                canvas: canvas,
-                headPoint: tangent.position,
-                angleRad: angle,
-                armLengthPx: armLength,
-                paint: _threadPaint,
-              );
-            }
           }
         }
       }
 
       threadIndex++;
-    }
-
-    // 6. Draw trailing particles and victory sparks
-    for (final p in animator.particles) {
-      final pos = p.currentPos(nowMs);
-      final alpha = p.alpha(nowMs);
-      if (alpha > 0.0) {
-        _particlePaint.color =
-            p.color.withValues(alpha: (p.color.a * alpha).clamp(0.0, 1.0));
-        canvas.drawCircle(pos, p.size * (0.5 + 0.5 * alpha), _particlePaint);
-      }
     }
   }
 

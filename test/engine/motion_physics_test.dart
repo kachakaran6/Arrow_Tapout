@@ -6,13 +6,12 @@ void main() {
     const double testCell = 24.0;
     const double testRay = 4.0 * testCell;
     const double testLength = 3.0 * testCell;
-    const double testD = testRay + testLength + 0.6 * testCell;
-    const double testA = 0.16 * testCell;
+    const double testD = testRay + testLength + 1.8 * testCell;
 
     double p(double u) => calculateExitDisplacement(
           u: u,
           totalDistanceD: testD,
-          anticipationA: testA,
+          anticipationA: 0.0,
         );
 
     test('p(0) = 0 exactly', () {
@@ -23,23 +22,11 @@ void main() {
       expect(p(1.0), closeTo(testD, 1e-9));
     });
 
-    test('p is non-increasing on [0, 0.08]', () {
+    test('p is monotonically non-decreasing on [0, 1.0]', () {
       var prev = p(0.0);
-      const steps = 100;
+      const steps = 1000;
       for (var i = 1; i <= steps; i++) {
-        final u = (i / steps) * 0.08;
-        final curr = p(u);
-        expect(curr, lessThanOrEqualTo(prev + 1e-9),
-            reason: 'p($u) should be <= p(${u - 0.08 / steps})');
-        prev = curr;
-      }
-    });
-
-    test('p is non-decreasing on [0.1, 1.0]', () {
-      var prev = p(0.10);
-      const steps = 900;
-      for (var i = 1; i <= steps; i++) {
-        final u = 0.10 + (i / steps) * 0.90;
+        final u = i / steps;
         final curr = p(u);
         expect(curr, greaterThanOrEqualTo(prev - 1e-9),
             reason: 'p($u) should be >= previous');
@@ -48,7 +35,7 @@ void main() {
     });
 
     test(
-        'finite-difference slope has no jump larger than 5% of D across 1/240 steps',
+        'finite-difference slope is smooth with no abrupt jumps across 1/240 steps',
         () {
       const dt = 1.0 / 240.0;
       const maxAllowedJump = 0.05 * testD;

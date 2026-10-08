@@ -12,19 +12,18 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 
 /// Pure math evaluation for the exit motion function p(u).
+/// Smooth ease-in quadratic acceleration off the board without jittery pullbacks.
 double calculateExitDisplacement({
   required double u,
   required double totalDistanceD,
   required double anticipationA,
 }) {
   final clampedU = u.clamp(0.0, 1.0);
-  final mainSlide = totalDistanceD * math.pow(clampedU, 2.2);
-  final sinTerm = math.sin(math.pi * math.min(clampedU / 0.20, 1.0));
-  final pullback = anticipationA * sinTerm * sinTerm;
-  return mainSlide - pullback;
+  final eased = Curves.easeInCubic.transform(clampedU);
+  return totalDistanceD * eased;
 }
 
-/// Cached geometry and extended path metrics for a thread in the lattice model.
+/// Cached geometry and metrics for a thread.
 class ThreadGeometry {
   ThreadGeometry({
     required this.thread,
@@ -41,34 +40,25 @@ class ThreadGeometry {
   final int cols;
 
   late final ui.Path basePath;
-  late final ui.Path extendedPath;
-  late final ui.PathMetric extendedMetric;
   late final double threadLengthPx;
-  late final double rayPx;
   late final double totalDistanceD;
-  late final double anticipationA;
-  late final double stubLengthPx;
   late final double durationMs;
 
   void _buildPaths() {
     threadLengthPx = (thread.cells.length - 1) * cellSize;
-    stubLengthPx = 0.3 * cellSize;
-    anticipationA = 0.16 * cellSize;
 
-    // Ray distance from head node to lattice edge
     final head = thread.head;
-    rayPx = switch (thread.dir) {
+    final rayPx = switch (thread.dir) {
       Dir.up => head.r * cellSize,
       Dir.down => (rows - 1 - head.r) * cellSize,
       Dir.left => head.c * cellSize,
       Dir.right => (cols - 1 - head.c) * cellSize,
     };
 
-    totalDistanceD = rayPx + threadLengthPx + 0.6 * cellSize;
+    totalDistanceD = rayPx + threadLengthPx + 1.8 * cellSize;
     durationMs =
-        (300.0 + 9.0 * (totalDistanceD / cellSize)).clamp(340.0, 820.0);
+        (280.0 + 5.0 * (totalDistanceD / cellSize)).clamp(290.0, 360.0);
 
-    // 1. Base path: node to node
     basePath = ui.Path();
     final first = thread.cells.first;
     basePath.moveTo(first.c * cellSize, first.r * cellSize);
@@ -76,49 +66,6 @@ class ThreadGeometry {
       final c = thread.cells[i];
       basePath.lineTo(c.c * cellSize, c.r * cellSize);
     }
-
-    // 2. Extended path: backward stub + thread path + ray + extra run
-    extendedPath = ui.Path();
-
-    // Opposite direction of first segment (tail direction)
-    final p0 = thread.cells[0];
-    final p1 = thread.cells[1];
-    final oppDx = (p0.c - p1.c).toDouble();
-    final oppDy = (p0.r - p1.r).toDouble();
-
-    // Backward stub start
-    final stubStartX = p0.c * cellSize + oppDx * stubLengthPx;
-    final stubStartY = p0.r * cellSize + oppDy * stubLengthPx;
-    extendedPath.moveTo(stubStartX, stubStartY);
-    extendedPath.lineTo(p0.c * cellSize, p0.r * cellSize);
-
-    // Thread body
-    for (var i = 1; i < thread.cells.length; i++) {
-      final c = thread.cells[i];
-      extendedPath.lineTo(c.c * cellSize, c.r * cellSize);
-    }
-
-    // Straight ray from head to grid boundary
-    final edgeNodeC = switch (thread.dir) {
-      Dir.left => 0.0,
-      Dir.right => (cols - 1).toDouble(),
-      _ => head.c.toDouble(),
-    };
-    final edgeNodeR = switch (thread.dir) {
-      Dir.up => 0.0,
-      Dir.down => (rows - 1).toDouble(),
-      _ => head.r.toDouble(),
-    };
-    extendedPath.lineTo(edgeNodeC * cellSize, edgeNodeR * cellSize);
-
-    // Extra run: 0.6 * cell + threadLengthPx beyond edge
-    final extraRun = 0.6 * cellSize + threadLengthPx;
-    final finalX = edgeNodeC * cellSize + thread.dir.dx * extraRun;
-    final finalY = edgeNodeR * cellSize + thread.dir.dy * extraRun;
-    extendedPath.lineTo(finalX, finalY);
-
-    final metrics = extendedPath.computeMetrics().toList();
-    extendedMetric = metrics.first;
   }
 }
 
@@ -148,7 +95,7 @@ class ActiveExit {
     return calculateExitDisplacement(
       u: u,
       totalDistanceD: geometry.totalDistanceD,
-      anticipationA: geometry.anticipationA,
+      anticipationA: 0.0,
     );
   }
 
@@ -157,8 +104,8 @@ class ActiveExit {
     if (reduceMotion) {
       return (1.0 - u).clamp(0.0, 1.0);
     }
-    if (u >= 0.85) {
-      return ((1.0 - u) / 0.15).clamp(0.0, 1.0);
+    if (u >= 0.65) {
+      return ((1.0 - u) / 0.35).clamp(0.0, 1.0);
     }
     return 1.0;
   }
@@ -176,10 +123,10 @@ class ActiveBlocked {
     required this.startTimeMs,
     required this.reduceMotion,
   })  : maxNudgePx =
-            math.min(0.45, math.max(0.12, distanceNodes - 0.6)) * cellSize,
+            math.min(0.35, math.max(0.12, distanceNodes - 0.7)) * cellSize,
         _spring = SpringSimulation(
-          const SpringDescription(mass: 1.0, stiffness: 420.0, damping: 26.0),
-          math.min(0.45, math.max(0.12, distanceNodes - 0.6)) * cellSize,
+          const SpringDescription(mass: 1.0, stiffness: 480.0, damping: 28.0),
+          math.min(0.35, math.max(0.12, distanceNodes - 0.7)) * cellSize,
           0.0,
           0.0,
         );
@@ -193,8 +140,8 @@ class ActiveBlocked {
   final double maxNudgePx;
   final SpringSimulation _spring;
 
-  static const double forwardMs = 90.0;
-  static const double totalMs = 370.0;
+  static const double forwardMs = 70.0;
+  static const double totalMs = 320.0;
 
   double displacementPx(double nowMs) {
     if (reduceMotion) return 0.0;
@@ -203,8 +150,7 @@ class ActiveBlocked {
 
     if (elapsed < forwardMs) {
       final t = elapsed / forwardMs;
-      final easeOut = 1.0 - math.pow(1.0 - t, 3).toDouble();
-      return maxNudgePx * easeOut;
+      return maxNudgePx * Curves.easeOutQuad.transform(t);
     } else {
       final springTime = (elapsed - forwardMs) / 1000.0;
       return _spring.x(springTime);
@@ -213,87 +159,17 @@ class ActiveBlocked {
 
   double tappedDangerLerp(double nowMs) {
     final p = ((nowMs - startTimeMs) / totalMs).clamp(0.0, 1.0);
-    if (p < 0.25) return (p / 0.25) * 0.30;
-    return (1.0 - (p - 0.25) / 0.75) * 0.30;
+    if (p < 0.25) return (p / 0.25) * 0.35;
+    return (1.0 - (p - 0.25) / 0.75) * 0.35;
   }
 
   double blockerPulseLerp(double nowMs) {
-    final p = ((nowMs - startTimeMs) / 420.0).clamp(0.0, 1.0);
-    if (p < 0.35) return (p / 0.35) * 0.55;
-    return (1.0 - (p - 0.35) / 0.65) * 0.55;
+    final p = ((nowMs - startTimeMs) / 360.0).clamp(0.0, 1.0);
+    if (p < 0.35) return (p / 0.35) * 0.50;
+    return (1.0 - (p - 0.35) / 0.65) * 0.50;
   }
 
-  bool isDone(double nowMs) => (nowMs - startTimeMs) >= 420.0;
-}
-
-/// Particle emitted during exit slides and level completions.
-class BoardParticle {
-  BoardParticle({
-    required this.x,
-    required this.y,
-    required this.vx,
-    required this.vy,
-    required this.color,
-    required this.size,
-    required this.startTimeMs,
-    required this.maxLifeMs,
-  });
-
-  final double x;
-  final double y;
-  final double vx;
-  final double vy;
-  final ui.Color color;
-  final double size;
-  final double startTimeMs;
-  final double maxLifeMs;
-
-  double progress(double nowMs) =>
-      ((nowMs - startTimeMs) / maxLifeMs).clamp(0.0, 1.0);
-
-  double alpha(double nowMs) {
-    final p = progress(nowMs);
-    return (1.0 - p).clamp(0.0, 1.0);
-  }
-
-  ui.Offset currentPos(double nowMs) {
-    final t = (nowMs - startTimeMs) / 1000.0;
-    return ui.Offset(x + vx * t, y + vy * t);
-  }
-
-  bool isDone(double nowMs) => (nowMs - startTimeMs) >= maxLifeMs;
-}
-
-/// Expanding circular shockwave ripple on tapout launch or level completion.
-class BoardRipple {
-  BoardRipple({
-    required this.center,
-    required this.maxRadius,
-    required this.color,
-    required this.startTimeMs,
-    this.durationMs = 380.0,
-  });
-
-  final ui.Offset center;
-  final double maxRadius;
-  final ui.Color color;
-  final double startTimeMs;
-  final double durationMs;
-
-  double progress(double nowMs) =>
-      ((nowMs - startTimeMs) / durationMs).clamp(0.0, 1.0);
-
-  double currentRadius(double nowMs) {
-    final p = progress(nowMs);
-    return maxRadius * Curves.easeOutCubic.transform(p);
-  }
-
-  double alpha(double nowMs) {
-    final p = progress(nowMs);
-    return (1.0 - p).clamp(0.0, 1.0);
-  }
-
-  bool isDone(double nowMs) => (nowMs - startTimeMs) >= durationMs;
+  bool isDone(double nowMs) => (nowMs - startTimeMs) >= 360.0;
 }
 
 /// Controller and animator driving all dynamic rendering on a single Ticker as a ChangeNotifier.
@@ -309,8 +185,6 @@ class BoardAnimator extends ChangeNotifier {
   final Map<int, ThreadGeometry> geometries = {};
   final Map<int, ActiveExit> exits = {};
   final Map<int, ActiveBlocked> blockeds = {};
-  final List<BoardParticle> particles = [];
-  final List<BoardRipple> ripples = [];
 
   int? hintedThreadId;
   double? hintStartTimeMs;
@@ -321,13 +195,9 @@ class BoardAnimator extends ChangeNotifier {
   double _nowMs = 0.0;
   double get nowMs => _nowMs;
 
-  final math.Random _rng = math.Random();
-
   bool get hasActiveAnimations =>
       exits.isNotEmpty ||
       blockeds.isNotEmpty ||
-      particles.isNotEmpty ||
-      ripples.isNotEmpty ||
       hintedThreadId != null ||
       (enterStartTimeMs != null && (_nowMs - enterStartTimeMs!) < enterTotalMs);
 
@@ -335,8 +205,6 @@ class BoardAnimator extends ChangeNotifier {
     geometries.clear();
     exits.clear();
     blockeds.clear();
-    particles.clear();
-    ripples.clear();
     hintedThreadId = null;
     hintStartTimeMs = null;
     enterStartTimeMs = null;
@@ -356,7 +224,7 @@ class BoardAnimator extends ChangeNotifier {
       enterStartTimeMs = null;
       return;
     }
-    enterTotalMs = math.min(threadCount * 8.0 + 360.0, 600.0);
+    enterTotalMs = math.min(threadCount * 8.0 + 320.0, 520.0);
     enterStartTimeMs = _nowMs;
     _ensureTicker();
   }
@@ -366,7 +234,7 @@ class BoardAnimator extends ChangeNotifier {
     final elapsed = _nowMs - enterStartTimeMs!;
     final delay = threadIndex * 8.0;
     if (elapsed < delay) return 0.0;
-    const duration = 360.0;
+    const duration = 320.0;
     final p = ((elapsed - delay) / duration).clamp(0.0, 1.0);
     return Primitives.curveEnter.transform(p);
   }
@@ -391,35 +259,6 @@ class BoardAnimator extends ChangeNotifier {
 
     if (hintedThreadId == threadId) {
       hintedThreadId = null;
-    }
-
-    // Spawn initial departure ripple at head node
-    if (!reduceMotion) {
-      final head = geom.thread.head;
-      final headPos = ui.Offset(head.c * geom.cellSize, head.r * geom.cellSize);
-      ripples.add(BoardRipple(
-        center: headPos,
-        maxRadius: geom.cellSize * 0.75,
-        color: particleColor ?? const ui.Color(0xFFE07A5F),
-        startTimeMs: _nowMs,
-        durationMs: 340.0,
-      ));
-
-      // Spawn initial stardust burst at head
-      for (var i = 0; i < 5; i++) {
-        final angle = _rng.nextDouble() * 2 * math.pi;
-        final speed = 30.0 + _rng.nextDouble() * 50.0;
-        particles.add(BoardParticle(
-          x: headPos.dx,
-          y: headPos.dy,
-          vx: math.cos(angle) * speed,
-          vy: math.sin(angle) * speed,
-          color: particleColor ?? const ui.Color(0xFFE07A5F),
-          size: 2.0 + _rng.nextDouble() * 2.2,
-          startTimeMs: _nowMs,
-          maxLifeMs: 280.0 + _rng.nextDouble() * 160.0,
-        ));
-      }
     }
 
     _ensureTicker();
@@ -452,48 +291,6 @@ class BoardAnimator extends ChangeNotifier {
     notifyListeners();
   }
 
-  void triggerVictoryCelebration({
-    required ui.Offset center,
-    required double radius,
-    required List<ui.Color> palette,
-  }) {
-    // Expanding rings
-    ripples.add(BoardRipple(
-      center: center,
-      maxRadius: radius * 1.2,
-      color: palette.first,
-      startTimeMs: _nowMs,
-      durationMs: 650.0,
-    ));
-    ripples.add(BoardRipple(
-      center: center,
-      maxRadius: radius * 0.85,
-      color: palette.length > 1 ? palette[1] : palette.first,
-      startTimeMs: _nowMs + 120.0,
-      durationMs: 600.0,
-    ));
-
-    // Particle sparklers burst
-    for (var i = 0; i < 36; i++) {
-      final angle = _rng.nextDouble() * 2 * math.pi;
-      final speed = 70.0 + _rng.nextDouble() * 160.0;
-      final col = palette[_rng.nextInt(palette.length)];
-      particles.add(BoardParticle(
-        x: center.dx + (math.cos(angle) * 8.0),
-        y: center.dy + (math.sin(angle) * 8.0),
-        vx: math.cos(angle) * speed,
-        vy: math.sin(angle) * speed - 15.0,
-        color: col,
-        size: 2.5 + _rng.nextDouble() * 3.0,
-        startTimeMs: _nowMs,
-        maxLifeMs: 500.0 + _rng.nextDouble() * 350.0,
-      ));
-    }
-
-    _ensureTicker();
-    notifyListeners();
-  }
-
   void _ensureTicker() {
     if (!_ticker.isActive) {
       _ticker.start();
@@ -503,41 +300,16 @@ class BoardAnimator extends ChangeNotifier {
   void _handleTick(Duration elapsed) {
     _nowMs = elapsed.inMicroseconds / 1000.0;
 
-    // Prune finished exits and emit trailing speed particles
+    // Prune finished exits
     final completedExits = <int>[];
     for (final exit in exits.values) {
       if (exit.isDone(_nowMs)) {
         completedExits.add(exit.threadId);
-      } else if (!exit.reduceMotion && _rng.nextDouble() < 0.40) {
-        // Emit subtle trail whisper
-        final geom = exit.geometry;
-        final disp = exit.displacement(_nowMs);
-        final tailOffset = (geom.stubLengthPx + disp)
-            .clamp(0.001, geom.extendedMetric.length - 0.001);
-        final tangent = geom.extendedMetric.getTangentForOffset(tailOffset);
-        if (tangent != null) {
-          particles.add(BoardParticle(
-            x: tangent.position.dx + (_rng.nextDouble() - 0.5) * 4.0,
-            y: tangent.position.dy + (_rng.nextDouble() - 0.5) * 4.0,
-            vx: -tangent.vector.dx * 20.0 + (_rng.nextDouble() - 0.5) * 15.0,
-            vy: -tangent.vector.dy * 20.0 + (_rng.nextDouble() - 0.5) * 15.0,
-            color: const ui.Color(0xFFE07A5F).withValues(alpha: 0.7),
-            size: 1.8 + _rng.nextDouble() * 1.5,
-            startTimeMs: _nowMs,
-            maxLifeMs: 220.0 + _rng.nextDouble() * 120.0,
-          ));
-        }
       }
     }
     for (final id in completedExits) {
       exits.remove(id);
     }
-
-    // Prune particles
-    particles.removeWhere((p) => p.isDone(_nowMs));
-
-    // Prune ripples
-    ripples.removeWhere((r) => r.isDone(_nowMs));
 
     // Prune finished blocked bounces
     final completedBlockeds = <int>[];
