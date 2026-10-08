@@ -2,8 +2,8 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:arrowtapout/design/primitives.dart';
+import 'package:arrowtapout/engine/arrow_extraction_engine.dart';
 import 'package:arrowtapout/engine/board_state.dart';
-import 'package:arrowtapout/engine/dir.dart';
 import 'package:arrowtapout/engine/level.dart';
 import 'package:arrowtapout/engine/thread.dart';
 import 'package:flutter/animation.dart';
@@ -11,54 +11,33 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 
-/// Pure math evaluation for the exit motion function p(u).
-/// Smooth ease-in quadratic acceleration off the board without jittery pullbacks.
-double calculateExitDisplacement({
-  required double u,
-  required double totalDistanceD,
-  required double anticipationA,
-}) {
-  final clampedU = u.clamp(0.0, 1.0);
-  final eased = Curves.easeInCubic.transform(clampedU);
-  return totalDistanceD * eased;
-}
+export 'package:arrowtapout/engine/arrow_extraction_engine.dart';
 
-/// Cached geometry and metrics for a thread.
+/// Cached geometry and extraction track for a thread on the board.
 class ThreadGeometry {
   ThreadGeometry({
     required this.thread,
     required this.cellSize,
     required this.rows,
     required this.cols,
-  }) {
-    _buildPaths();
+  }) : track = ExtractionTrack(
+          thread: thread,
+          cellSize: cellSize,
+          rows: rows,
+          cols: cols,
+        ) {
+    _buildBasePath();
   }
 
   final Thread thread;
   final double cellSize;
   final int rows;
   final int cols;
+  final ExtractionTrack track;
 
   late final ui.Path basePath;
-  late final double threadLengthPx;
-  late final double totalDistanceD;
-  late final double durationMs;
 
-  void _buildPaths() {
-    threadLengthPx = (thread.cells.length - 1) * cellSize;
-
-    final head = thread.head;
-    final rayPx = switch (thread.dir) {
-      Dir.up => head.r * cellSize,
-      Dir.down => (rows - 1 - head.r) * cellSize,
-      Dir.left => head.c * cellSize,
-      Dir.right => (cols - 1 - head.c) * cellSize,
-    };
-
-    totalDistanceD = rayPx + threadLengthPx + 1.8 * cellSize;
-    durationMs =
-        (280.0 + 5.0 * (totalDistanceD / cellSize)).clamp(290.0, 360.0);
-
+  void _buildBasePath() {
     basePath = ui.Path();
     final first = thread.cells.first;
     basePath.moveTo(first.c * cellSize, first.r * cellSize);
@@ -69,15 +48,14 @@ class ThreadGeometry {
   }
 }
 
-/// Active exit animation state for one thread.
+/// Active exit animation state for one thread driving path-aware extraction.
 class ActiveExit {
   ActiveExit({
     required this.threadId,
     required this.geometry,
-    required this.durationMs,
     required this.startTimeMs,
     required this.reduceMotion,
-  });
+  }) : durationMs = reduceMotion ? 180.0 : geometry.track.durationMs;
 
   final int threadId;
   final ThreadGeometry geometry;
@@ -90,24 +68,9 @@ class ActiveExit {
     return ((nowMs - startTimeMs) / durationMs).clamp(0.0, 1.0);
   }
 
-  double displacement(double nowMs) {
-    final u = progress(nowMs);
-    return calculateExitDisplacement(
-      u: u,
-      totalDistanceD: geometry.totalDistanceD,
-      anticipationA: 0.0,
-    );
-  }
-
-  double alpha(double nowMs) {
-    final u = progress(nowMs);
-    if (reduceMotion) {
-      return (1.0 - u).clamp(0.0, 1.0);
-    }
-    if (u >= 0.65) {
-      return ((1.0 - u) / 0.35).clamp(0.0, 1.0);
-    }
-    return 1.0;
+  ExtractedGeometry sampleGeometry(double nowMs) {
+    final p = progress(nowMs);
+    return geometry.track.sample(p, reduceMotion: reduceMotion);
   }
 
   bool isDone(double nowMs) => progress(nowMs) >= 1.0;
@@ -247,12 +210,9 @@ class BoardAnimator extends ChangeNotifier {
     final geom = geometries[threadId];
     if (geom == null) return;
 
-    final durationMs = reduceMotion ? 180.0 : geom.durationMs;
-
     exits[threadId] = ActiveExit(
       threadId: threadId,
       geometry: geom,
-      durationMs: durationMs,
       startTimeMs: _nowMs,
       reduceMotion: reduceMotion,
     );

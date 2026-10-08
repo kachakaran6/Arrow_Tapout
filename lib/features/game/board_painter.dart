@@ -77,7 +77,7 @@ void drawChevronArrowhead({
   canvas.drawPath(path, strokeBorder);
 }
 
-/// Unified Board Painter rendering lattice dots, ambient shadows, and silky-smooth translating threads.
+/// Unified Board Painter rendering lattice dots, ambient shadows, and path-aware extracted threads.
 class BoardPainter extends CustomPainter {
   BoardPainter({
     required this.level,
@@ -210,11 +210,10 @@ class BoardPainter extends CustomPainter {
 
       if (activeExit != null) {
         if (!reduceMotion) {
-          final disp = activeExit.displacement(nowMs);
-          final alpha = activeExit.alpha(nowMs);
-          canvas.translate(thread.dir.dx * disp, thread.dir.dy * disp);
-          _shadowPaint.color = tokens.ink.withValues(alpha: 0.12 * alpha);
-          canvas.drawPath(geom.basePath, _shadowPaint);
+          final extracted = activeExit.sampleGeometry(nowMs);
+          _shadowPaint.color =
+              tokens.ink.withValues(alpha: 0.12 * extracted.alpha);
+          canvas.drawPath(extracted.visiblePath, _shadowPaint);
         }
       } else {
         final activeBlocked = animator.blockeds[tid];
@@ -241,42 +240,20 @@ class BoardPainter extends CustomPainter {
         continue;
       }
 
-      final headNode = thread.head;
-      final headPoint = Offset(headNode.c * cellSize, headNode.r * cellSize);
-      final angle = _dirToAngle(thread.dir);
-
       if (activeExit != null) {
-        // --- Smooth Linear Translation Exit Animation ---
-        final alpha = activeExit.alpha(nowMs);
+        // --- Path-Aware Arrow Extraction Animation ---
+        final extracted = activeExit.sampleGeometry(nowMs);
         _threadPaint.color =
-            tokens.thread.withValues(alpha: tokens.thread.a * alpha);
+            tokens.thread.withValues(alpha: tokens.thread.a * extracted.alpha);
 
-        if (reduceMotion) {
-          // Fade in place
-          canvas.drawPath(geom.basePath, _threadPaint);
-          drawChevronArrowhead(
-            canvas: canvas,
-            headPoint: headPoint,
-            angleRad: angle,
-            armLengthPx: armLength,
-            paint: _threadPaint,
-          );
-        } else {
-          final disp = activeExit.displacement(nowMs);
-          canvas.save();
-          canvas.translate(thread.dir.dx * disp, thread.dir.dy * disp);
-
-          canvas.drawPath(geom.basePath, _threadPaint);
-          drawChevronArrowhead(
-            canvas: canvas,
-            headPoint: headPoint,
-            angleRad: angle,
-            armLengthPx: armLength,
-            paint: _threadPaint,
-          );
-
-          canvas.restore();
-        }
+        canvas.drawPath(extracted.visiblePath, _threadPaint);
+        drawChevronArrowhead(
+          canvas: canvas,
+          headPoint: extracted.headPosition,
+          angleRad: extracted.headAngleRad,
+          armLengthPx: armLength,
+          paint: _threadPaint,
+        );
       } else {
         // --- Idle, Blocked, or Entering thread ---
         final activeBlocked = animator.blockeds[tid];
@@ -288,8 +265,12 @@ class BoardPainter extends CustomPainter {
           }
         }
 
+        final headNode = thread.head;
+        final headPoint = Offset(headNode.c * cellSize, headNode.r * cellSize);
+        final angle = _dirToAngle(thread.dir);
+
         if (activeBlocked != null) {
-          // Blocked tapped thread
+          // Blocked tapped thread: elastic spring bump
           final dispPx = activeBlocked.displacementPx(nowMs);
           final dangerLerp = activeBlocked.tappedDangerLerp(nowMs);
           _threadPaint.color =
